@@ -39,9 +39,37 @@ Open the browser on the ref so the user can follow along: `diffity open <branch>
 
 ## 4. Arm the monitor
 
-Start a persistent `Monitor` polling `diffity agent list --json` (roughly every 20s) that emits one event per new *human* comment or status change. Seed its "seen" set with every comment ID present at startup so pre-existing and the review's own comments don't self-trigger.
+Start a persistent `Monitor` that polls `diffity agent list --json` roughly every 20s and emits one event per new *human* comment or status change. Seed its "seen" set with every comment ID present at startup so pre-existing and the review's own comments don't self-trigger.
 
 Filter to non-agent authors by checking `author.type != "agent"` rather than matching `== "user"` — the exact type string varies. Compare by comment ID, not content.
+
+**Critical implementation detail:** The monitor must use a **single long-running process** that persists the `seen` set in memory across poll iterations. Do NOT use a shell `while` loop that spawns a fresh subprocess each iteration — the seen set resets on every invocation and no events ever fire. Use a single python (or node) script with `import time; while True: ... time.sleep(20)` so the set grows in-place.
+
+Example pattern:
+```python
+#!/usr/bin/env python3
+import json, subprocess, sys, time
+
+SEEN = set(sys.argv[1].split(',')) if len(sys.argv) > 1 and sys.argv[1] else set()
+while True:
+    try:
+        raw = subprocess.check_output(['diffity', 'agent', 'list', '--json'], stderr=subprocess.DEVNULL)
+        data = json.loads(raw)
+        threads = data if isinstance(data, list) else data.get('threads', [])
+        for thread in threads:
+            for comment in thread.get('comments', []):
+                cid = comment['id']
+                author = comment.get('author', {})
+                if cid not in SEEN and author.get('type', '') != 'agent':
+                    file_path = thread.get('file', 'unknown')
+                    line = thread.get('line', '?')
+                    body = comment.get('body', '')[:120]
+                    print(f'NEW COMMENT [{cid}] {file_path}:{line} — {body}', flush=True)
+                    SEEN.add(cid)
+    except Exception:
+        pass
+    time.sleep(20)
+```
 
 When an event fires, follow the [[diffity-resolve]] flow: reply, and make the code fix inline where the comment is actionable.
 
