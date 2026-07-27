@@ -61,8 +61,8 @@ while True:
                 cid = comment['id']
                 author = comment.get('author', {})
                 if cid not in SEEN and author.get('type', '') != 'agent':
-                    file_path = thread.get('file', 'unknown')
-                    line = thread.get('line', '?')
+                    file_path = thread.get('filePath', 'unknown')
+                    line = thread.get('startLine', '?')
                     body = comment.get('body', '')[:120]
                     print(f'NEW COMMENT [{cid}] {file_path}:{line} — {body}', flush=True)
                     SEEN.add(cid)
