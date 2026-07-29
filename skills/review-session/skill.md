@@ -1,6 +1,6 @@
 ---
 name: review-session
-description: Run a continuous, resumable code-review session on the current hayai-learn branch — opens a diffity diff session, restores prior review history from a local git-ignored log, dispatches an AI code review via superpowers:requesting-code-review, posts findings as inline diffity comments, and keeps watching for new comments to address as the branch evolves. Use this whenever the user says "create a review session", "let's review", "review this branch/PR", "run a code review", or "check for new review comments" in this repo — not just when they say the exact phrase "review session". Also use it to resume/continue a review session started earlier, or to stop one.
+description: Run a continuous, resumable code-review session on the current hayai-learn branch — opens a diffity diff session, restores prior review history from a local git-ignored log, runs an AI code review via the diffity-review skill (or a direct self-review if that's unavailable), posts findings as inline diffity comments, and keeps watching for new comments to address as the branch evolves. Use this whenever the user says "create a review session", "let's review", "review this branch/PR", "run a code review", or "check for new review comments" in this repo — not just when they say the exact phrase "review session". Also use it to resume/continue a review session started earlier, or to stop one.
 user-invocable: true
 ---
 
@@ -12,11 +12,9 @@ Follow the steps below in order. Don't skip step 4 (arming the monitor) — it's
 
 ## 1. Open and verify the diffity session
 
-Check that `diffity` is available first: run `which diffity` (same check the **diffity-diff** and **diffity-resolve** skills use). If not found, install it with `npm install -g diffity`.
+Check that `diffity` is available first: run `which diffity`. If not found, install it with `npm install -g diffity`.
 
 Pin the session to a **branch ref**, not a commit SHA — a SHA-pinned session mints a new session on every commit and loses its comment thread. Use the branch the user names, defaulting to `master`.
-
-This session needs to bind the agent CLI to a specific base-branch comparison (`--base`/`--new`) rather than just opening the working-tree diff, so it doesn't delegate to the **diffity-diff** skill's open step — that skill covers the simpler "just show me the diff" case, not ref-pinned agent-bound sessions.
 
 ```bash
 diffity --base <branch> --new --no-open   # run in background
@@ -36,9 +34,9 @@ If no note exists yet, you'll create one in step 5. `.review-sessions/` is git-i
 
 ## 3. Run the AI review and post findings
 
-Dispatch the review via the **superpowers:requesting-code-review** skill (not a hand-rolled review) — split large diffs by area (e.g. backend/frontend) so each reviewer subagent has focused context, and validate each finding against the full surrounding code before trusting it.
+Invoke the **diffity-review** skill against the bound ref rather than hand-rolling a reviewer subagent — it already runs the full analysis playbook (data-flow, state/lifecycle, contract, boundary, edge-case, completeness/test-coverage passes), posts `[must-fix]`/`[suggestion]`/`[question]`-tagged inline comments in severity order, and opens the browser itself. Pass the same ref this session is bound to; use its `focus` argument if the user asked for a targeted review (e.g. "check for security issues").
 
-Post findings as inline comments with `diffity agent comment`, prefixed `[must-fix]`, `[suggestion]`, or `[question]`, must-fix findings first. On a resumed session (step 2 found history), diff new findings against the restored ones and only post what's actually new — don't re-raise something already threaded.
+On a resumed session (step 2 found history), diff new findings against the restored ones and only let it post what's actually new — don't re-raise something already threaded. If the **diffity-review** skill isn't available (not listed among invocable skills), do the review yourself directly: read every changed file, apply the same analysis (data-flow, state/lifecycle, contract, boundary, edge-case, completeness/test-coverage), and post findings the same way — `[must-fix]`/`[suggestion]`/`[question]`-tagged inline comments via `diffity agent comment`, must-fix first.
 
 Open the browser on the ref so the user can follow along: `diffity open <branch>`.
 
@@ -76,7 +74,14 @@ while True:
     time.sleep(20)
 ```
 
-When an event fires, invoke the **diffity-resolve** skill (`Skill({ skill: "diffity-resolve" })`) to reply and make the code fix inline where the comment is actionable — don't re-derive its actionability rules (skip general comments, skip agent-waiting-for-user threads, handle `[nit]`/`[question]` tags) here, that logic lives in diffity-resolve and would drift if duplicated.
+When an event fires, resolve it directly with the `diffity agent` CLI the CLI already does all the work:
+
+1. **Skip** general comments (`filePath` is `__general__`) — these are summaries, not actionable code changes.
+2. **Skip** threads where the last comment is an agent reply awaiting the user's response (e.g. "Could you clarify...?") and the user hasn't answered yet.
+3. **`[nit]` comments** are still actionable — resolve them like any other finding.
+4. **`[question]` comments** — read the question, check the relevant code, and answer via `diffity agent resolve <id> --summary "<answer>"`.
+5. Otherwise, read the comment body and the surrounding source, make the requested change with the Edit tool, then resolve it: `diffity agent resolve <id> --summary "Fixed: <what changed>"`.
+6. If the comment is genuinely unclear, reply instead of guessing: `diffity agent reply <id> --body "Could you clarify...?"`.
 
 ## 5. Keep the local log current, and keep going
 
