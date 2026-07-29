@@ -1,6 +1,7 @@
 ---
 name: review-session
 description: Run a continuous, resumable code-review session on the current hayai-learn branch — opens a diffity diff session, restores prior review history from a local git-ignored log, dispatches an AI code review via superpowers:requesting-code-review, posts findings as inline diffity comments, and keeps watching for new comments to address as the branch evolves. Use this whenever the user says "create a review session", "let's review", "review this branch/PR", "run a code review", or "check for new review comments" in this repo — not just when they say the exact phrase "review session". Also use it to resume/continue a review session started earlier, or to stop one.
+user-invocable: true
 ---
 
 # Review Session
@@ -11,7 +12,11 @@ Follow the steps below in order. Don't skip step 4 (arming the monitor) — it's
 
 ## 1. Open and verify the diffity session
 
+Check that `diffity` is available first: run `which diffity` (same check the **diffity-diff** and **diffity-resolve** skills use). If not found, install it with `npm install -g diffity`.
+
 Pin the session to a **branch ref**, not a commit SHA — a SHA-pinned session mints a new session on every commit and loses its comment thread. Use the branch the user names, defaulting to `master`.
+
+This session needs to bind the agent CLI to a specific base-branch comparison (`--base`/`--new`) rather than just opening the working-tree diff, so it doesn't delegate to the **diffity-diff** skill's open step — that skill covers the simpler "just show me the diff" case, not ref-pinned agent-bound sessions.
 
 ```bash
 diffity --base <branch> --new --no-open   # run in background
@@ -71,7 +76,7 @@ while True:
     time.sleep(20)
 ```
 
-When an event fires, follow the [[diffity-resolve]] flow: reply, and make the code fix inline where the comment is actionable.
+When an event fires, invoke the **diffity-resolve** skill (`Skill({ skill: "diffity-resolve" })`) to reply and make the code fix inline where the comment is actionable — don't re-derive its actionability rules (skip general comments, skip agent-waiting-for-user threads, handle `[nit]`/`[question]` tags) here, that logic lives in diffity-resolve and would drift if duplicated.
 
 ## 5. Keep the local log current, and keep going
 
