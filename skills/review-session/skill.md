@@ -28,7 +28,16 @@ Why the curl step: the diffity agent CLI stays bound to whatever ref was last lo
 
 ## 2. Restore prior history from the local log, if any
 
-Check `.review-sessions/<branch>.md` for an existing review-session note for this branch (a "live thread log"). If one exists, re-post its saved comment threads onto the freshly-opened diffity session with `diffity agent comment`, then update the log's thread-ID column with the new IDs this repost mints — a `--new` session always issues fresh thread IDs even for restored comments.
+Check `.review-sessions/<slug>.md` for an existing review-session note for this branch (a "live thread log"). Don't derive the slug by hand — get it from the helper that ships with this skill, which also creates the directory:
+
+```bash
+python3 "$SKILL_DIR/scripts/slug.py" --path --mkdir            # current branch
+python3 "$SKILL_DIR/scripts/slug.py" --path --mkdir <branch>   # a named branch
+```
+
+`$SKILL_DIR` is this skill's own directory (`~/.claude/skills/review-session` on this machine). The slug is the branch name with `/` → `__` and anything else unsafe → `-`, so the log stays one flat file per branch (`feature/payments` → `.review-sessions/feature__payments.md`, not a nested directory that doesn't exist).
+
+If one exists, re-post its saved comment threads onto the freshly-opened diffity session with `diffity agent comment`, replaying each row's recorded line range and side (see step 5) so findings land back on the same code, then update the log's thread-ID column with the new IDs this repost mints — a `--new` session always issues fresh thread IDs even for restored comments.
 
 If no note exists yet, you'll create one in step 5. `.review-sessions/` is git-ignored (see `.gitignore`) — this log is local scratch state, not something to commit.
 
@@ -42,37 +51,22 @@ Open the browser on the ref so the user can follow along: `diffity open <branch>
 
 ## 4. Arm the monitor
 
-Start a persistent `Monitor` that polls `diffity agent list --json` roughly every 20s and emits one event per new *human* comment or status change. Seed its "seen" set with every comment ID present at startup so pre-existing and the review's own comments don't self-trigger.
+Start a persistent `Monitor` that polls `diffity agent list --json` roughly every 20s and emits one event per new *human* comment or thread status change. Track per-thread status as well as comment IDs — a resolve or dismiss leaves no comment behind. Seed both from one listing fetched before the loop starts, so pre-existing and the review's own comments don't self-trigger.
 
 Filter to non-agent authors by checking `author.type != "agent"` rather than matching `== "user"` — the exact type string varies. Compare by comment ID, not content.
 
-**Critical implementation detail:** The monitor must use a **single long-running process** that persists the `seen` set in memory across poll iterations. Do NOT use a shell `while` loop that spawns a fresh subprocess each iteration — the seen set resets on every invocation and no events ever fire. Use a single python (or node) script with `import time; while True: ... time.sleep(20)` so the set grows in-place.
+Give the poll a timeout and print failures instead of swallowing them, with a bounded backoff and an exit after repeated errors — a silently stalled monitor is indistinguishable from one with nothing to report.
 
-Example pattern:
-```python
-#!/usr/bin/env python3
-import json, subprocess, sys, time
+Don't hand-roll the poller — run the one that ships with this skill:
 
-SEEN = set(sys.argv[1].split(',')) if len(sys.argv) > 1 and sys.argv[1] else set()
-while True:
-    try:
-        raw = subprocess.check_output(['diffity', 'agent', 'list', '--json'], stderr=subprocess.DEVNULL)
-        data = json.loads(raw)
-        threads = data if isinstance(data, list) else data.get('threads', [])
-        for thread in threads:
-            for comment in thread.get('comments', []):
-                cid = comment['id']
-                author = comment.get('author', {})
-                if cid not in SEEN and author.get('type', '') != 'agent':
-                    file_path = thread.get('filePath', 'unknown')
-                    line = thread.get('startLine', '?')
-                    body = comment.get('body', '')[:120]
-                    print(f'NEW COMMENT [{cid}] {file_path}:{line} — {body}', flush=True)
-                    SEEN.add(cid)
-    except Exception:
-        pass
-    time.sleep(20)
+```bash
+python3 "$SKILL_DIR/scripts/monitor.py"                    # 20s poll, gives up after 5 errors
+python3 "$SKILL_DIR/scripts/monitor.py" --poll 30 --max-errors 8
 ```
+
+It seeds from one listing at startup, then prints `NEW COMMENT [<id>] <file>:<line> — <body>` and `STATUS CHANGE [<id>] ... open → resolved` lines as events arrive. It prints an `armed` line with the seeded counts on startup — if that line never appears, the monitor isn't running.
+
+**Critical implementation detail** (why it's a script and not an inline loop): the monitor must be a **single long-running process** that persists the `seen` set in memory across poll iterations. Do NOT wrap it in a shell `while` loop that re-invokes it each iteration — the seen set resets on every invocation and no events ever fire. Start it once under `Monitor` and leave it running.
 
 When an event fires, resolve it directly with the `diffity agent` CLI the CLI already does all the work:
 
@@ -85,7 +79,9 @@ When an event fires, resolve it directly with the `diffity agent` CLI the CLI al
 
 ## 5. Keep the local log current, and keep going
 
-Every time you post, reply, resolve, or dismiss a comment, update `.review-sessions/<branch>.md`'s live thread log — a table of `thread ID | severity | file:line | finding | status`, plus an append-only exchange log of what happened and when. This is what step 2 restores from on the next session, so it needs to reflect reality, not just the initial post.
+Every time you post, reply, resolve, or dismiss a comment, update the live thread log at the `scripts/slug.py --path` location from step 2 — a table of `thread ID | severity | file | start-end lines | side | full comment body | status`, plus an append-only exchange log of what happened and when. This is what step 2 restores from on the next session, so it needs to reflect reality, not just the initial post.
+
+Record the line *range* and the diff side (`new`/`old`), not a bare `file:line` — step 2 replays these rows verbatim, and a single line number moves multi-line and old-side findings onto the wrong code.
 
 The review session doesn't end after the first pass — keep monitoring, addressing feedback, and re-reviewing as the branch evolves, until the user says to stop.
 
@@ -98,3 +94,4 @@ When the user says to stop the review (or "stop the monitor"), tear down everyth
 - Base branch default: `master`
 - Local log dir: `.review-sessions/` (git-ignored — see `.gitignore`)
 - Diffity port: `5391`
+- Helper scripts (next to this file): `scripts/slug.py` (branch → log path), `scripts/monitor.py` (comment poller)
