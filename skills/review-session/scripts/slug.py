@@ -5,112 +5,77 @@ The live thread log lives at `.review-sessions/<slug>.md`, one flat file per
 branch. A branch name can contain `/` and other characters that are illegal or
 awkward in a filename, so it gets normalized here rather than by hand:
 
-    feature/payments        -> feature__payments
-    feat/JIRA-12 fix cache  -> feat__JIRA-12-fix-cache
-    release/v1.2.3          -> release__v1.2.3
+    feature/payments        -> feature__payments.1a2b3c4d5e
+    feat/JIRA-12 fix cache  -> feat__JIRA-12-fix-cache.3c4d5e6f7a
+    release/v1.2.3          -> release__v1.2.3.9f8e7d6c5b
 
-Case is preserved deliberately: slugs minted before this script existed used a
-bare `/` -> `__` swap, and lowercasing would orphan their log files.
+Every slug carries a short digest of the *full* branch name, so two branches
+that happen to render the same readable prefix (`feature/payments` vs. the
+literal `feature__payments`, or two long names that agree on their first 200
+characters) never collide on one log file.
+
+This script's only job is normalizing a branch name to a slug string. Joining
+it into a path and creating the log directory is the caller's job. The branch
+name is always required — the caller must pass the exact branch it's reviewing
+rather than relying on whatever happens to be checked out.
 
 Usage:
-    slug.py                      # slug for the current branch
-    slug.py feature/payments     # slug for a named branch
-    slug.py --path               # .review-sessions/<slug>.md for the current branch
-    slug.py --path --mkdir       # ...and create .review-sessions/ if missing
-    slug.py --path --dir /tmp/x  # ...under a different log directory
+    slug.py feature/payments  # slug for the named branch
 """
 
-import argparse
-import os
+import hashlib
 import re
-import subprocess
 import sys
-
-DEFAULT_LOG_DIR = ".review-sessions"
 
 # Longest slug we emit. Leaves room for ".md" under the common 255-byte limit.
 MAX_SLUG_LEN = 200
+
+# Hex chars of the branch-name digest appended to every slug.
+DIGEST_LEN = 10
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]")
 _DASH_RUN = re.compile(r"-{2,}")
 _DASH_AROUND_SEP = re.compile(r"-*__-*")
 
 
-def slugify(branch):
-    """Turn a branch name into a safe, flat filename stem."""
-    name = branch.strip()
-    if name.startswith("refs/heads/"):
-        name = name[len("refs/heads/"):]
-
+def _readable_part(name):
+    """Apply the character-safety transforms, without truncating or hashing."""
     slug = name.replace("/", "__")
     slug = _UNSAFE.sub("-", slug)
     slug = _DASH_RUN.sub("-", slug)
     slug = _DASH_AROUND_SEP.sub("__", slug)
     # No leading dot (would hide the log), no trailing dot or dash.
     slug = slug.strip("-").lstrip(".").rstrip(".")
-    slug = slug[:MAX_SLUG_LEN].rstrip("-.")
-
-    if not slug:
-        raise ValueError("branch %r normalizes to an empty slug" % branch)
     return slug
 
 
-def current_branch():
-    """The checked-out branch name, or exit if HEAD is detached."""
-    try:
-        out = subprocess.check_output(
-            ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
-            stderr=subprocess.DEVNULL,
-            timeout=10,
-        )
-    except subprocess.CalledProcessError:
-        sys.exit(
-            "HEAD is detached (or this is not a git repo) — pass the branch "
-            "name explicitly, e.g. `slug.py feature/payments`"
-        )
-    except (OSError, subprocess.SubprocessError) as err:
-        sys.exit("could not read the current branch: %s" % err)
-    return out.decode("utf-8", "replace").strip()
+def _digest(name):
+    """Stable digest of the full branch name, used to keep slugs collision-resistant."""
+    return hashlib.sha256(name.encode("utf-8")).hexdigest()[:DIGEST_LEN]
+
+
+def slugify(branch):
+    """Turn a branch name into a safe, flat, collision-resistant filename stem."""
+    name = branch.strip()
+    if name.startswith("refs/heads/"):
+        name = name[len("refs/heads/"):]
+    if not name:
+        raise ValueError("branch %r normalizes to an empty slug" % branch)
+
+    suffix = "." + _digest(name)
+    readable = _readable_part(name)[:MAX_SLUG_LEN - len(suffix)].rstrip("-.")
+    return (readable + suffix) if readable else suffix.lstrip(".")
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "branch",
-        nargs="?",
-        help="branch name to normalize (default: the current branch)",
-    )
-    parser.add_argument(
-        "--path",
-        action="store_true",
-        help="print the full <dir>/<slug>.md log path instead of the bare slug",
-    )
-    parser.add_argument(
-        "--dir",
-        default=DEFAULT_LOG_DIR,
-        help="log directory for --path (default: %s)" % DEFAULT_LOG_DIR,
-    )
-    parser.add_argument(
-        "--mkdir",
-        action="store_true",
-        help="create the log directory if it is missing (implies --path)",
-    )
-    args = parser.parse_args(argv)
+    argv = sys.argv[1:] if argv is None else argv
+    if len(argv) != 1:
+        sys.exit("usage: slug.py <branch>")
 
-    branch = args.branch if args.branch else current_branch()
     try:
-        slug = slugify(branch)
+        print(slugify(argv[0]))
     except ValueError as err:
         sys.exit(str(err))
-
-    if args.mkdir:
-        args.path = True
-        try:
-            os.makedirs(args.dir, exist_ok=True)
-        except OSError as err:
-            sys.exit("could not create %s: %s" % (args.dir, err))
-
-    print(os.path.join(args.dir, slug + ".md") if args.path else slug)
     return 0
 
 

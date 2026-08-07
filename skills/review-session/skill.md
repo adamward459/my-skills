@@ -28,14 +28,15 @@ Why the curl step: the diffity agent CLI stays bound to whatever ref was last lo
 
 ## 2. Restore prior history from the local log, if any
 
-Check `.review-sessions/<slug>.md` for an existing review-session note for this branch (a "live thread log"). Don't derive the slug by hand — get it from the helper that ships with this skill, which also creates the directory:
+Check `.review-sessions/<slug>.md` for an existing review-session note for this branch (a "live thread log"). Don't derive the slug by hand — get it from the helper that ships with this skill, then join it into a path yourself and make sure the directory exists:
 
 ```bash
-python3 "$SKILL_DIR/scripts/slug.py" --path --mkdir            # current branch
-python3 "$SKILL_DIR/scripts/slug.py" --path --mkdir <branch>   # a named branch
+SLUG=$(python3 "$SKILL_DIR/scripts/slug.py" <branch>)   # the exact branch from step 1, not whatever's checked out
+mkdir -p .review-sessions
+LOG=".review-sessions/$SLUG.md"
 ```
 
-`$SKILL_DIR` is this skill's own directory (`~/.claude/skills/review-session` on this machine). The slug is the branch name with `/` → `__` and anything else unsafe → `-`, so the log stays one flat file per branch (`feature/payments` → `.review-sessions/feature__payments.md`, not a nested directory that doesn't exist).
+`$SKILL_DIR` is this skill's own directory (`~/.claude/skills/review-session` on this machine). The slug is the branch name with `/` → `__` and anything else unsafe → `-`, plus a short digest of the full branch name so distinct branches can't collide on one log file.
 
 If one exists, re-post its saved comment threads onto the freshly-opened diffity session with `diffity agent comment`, replaying each row's recorded line range and side (see step 5) so findings land back on the same code, then update the log's thread-ID column with the new IDs this repost mints — a `--new` session always issues fresh thread IDs even for restored comments.
 
@@ -79,7 +80,7 @@ When an event fires, resolve it directly with the `diffity agent` CLI the CLI al
 
 ## 5. Keep the local log current, and keep going
 
-Every time you post, reply, resolve, or dismiss a comment, update the live thread log at the `scripts/slug.py --path` location from step 2 — a table of `thread ID | severity | file | start-end lines | side | full comment body | status`, plus an append-only exchange log of what happened and when. This is what step 2 restores from on the next session, so it needs to reflect reality, not just the initial post.
+Every time you post, reply, resolve, or dismiss a comment, update the live thread log at `$LOG` from step 2 — a table of `thread ID | severity | file | start-end lines | side | full comment body | status`, plus an append-only exchange log of what happened and when. This is what step 2 restores from on the next session, so it needs to reflect reality, not just the initial post.
 
 Record the line *range* and the diff side (`new`/`old`), not a bare `file:line` — step 2 replays these rows verbatim, and a single line number moves multi-line and old-side findings onto the wrong code.
 
@@ -94,4 +95,4 @@ When the user says to stop the review (or "stop the monitor"), tear down everyth
 - Base branch default: `master`
 - Local log dir: `.review-sessions/` (git-ignored — see `.gitignore`)
 - Diffity port: `5391`
-- Helper scripts (next to this file): `scripts/slug.py` (branch → log path), `scripts/monitor.py` (comment poller)
+- Helper scripts (next to this file): `scripts/slug.py` (branch → log slug), `scripts/monitor.py` (comment poller)
