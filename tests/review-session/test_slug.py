@@ -46,7 +46,9 @@ class SlugifyTests(unittest.TestCase):
         self.assertNotEqual(slug.slugify(a), slug.slugify(b))
 
     def test_refs_heads_prefix_is_stripped(self):
-        self.assertEqual(slug.slugify("refs/heads/feature/payments"), slug.slugify("feature/payments"))
+        self.assertEqual(
+            slug.slugify("refs/heads/feature/payments"), slug.slugify("feature/payments")
+        )
 
     def test_unsafe_characters_become_dashes(self):
         result = slug.slugify("feat/JIRA-12 fix cache")
@@ -57,7 +59,8 @@ class SlugifyTests(unittest.TestCase):
         self.assertNotIn("---", result)
         self.assertNotIn("...", result.replace("." + result.rsplit(".", 1)[1], ""))
 
-    def test_result_never_exceeds_max_slug_len_plus_digest(self):
+    def test_result_never_exceeds_max_slug_len(self):
+        # The digest is budgeted *inside* MAX_SLUG_LEN, not added on top of it.
         result = slug.slugify("y" * 500)
         self.assertLessEqual(len(result), slug.MAX_SLUG_LEN)
 

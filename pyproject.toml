@@ -1,0 +1,9 @@
+[tool.ruff]
+# The scripts and tests were written to ~100 columns; keep that.
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, isort, flake8-bugbear. No pyupgrade: the scripts use
+# %-formatting on purpose so they stay readable on old Pythons.
+select = ["E", "F", "I", "B"]

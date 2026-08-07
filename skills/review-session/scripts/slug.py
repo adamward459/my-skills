@@ -58,12 +58,12 @@ def slugify(branch):
     """Turn a branch name into a safe, flat, collision-resistant filename stem."""
     name = branch.strip()
     if name.startswith("refs/heads/"):
-        name = name[len("refs/heads/"):]
+        name = name[len("refs/heads/") :]
     if not name:
         raise ValueError("branch %r normalizes to an empty slug" % branch)
 
     suffix = "." + _digest(name)
-    readable = _readable_part(name)[:MAX_SLUG_LEN - len(suffix)].rstrip("-.")
+    readable = _readable_part(name)[: MAX_SLUG_LEN - len(suffix)].rstrip("-.")
     return (readable + suffix) if readable else suffix.lstrip(".")
 
 
