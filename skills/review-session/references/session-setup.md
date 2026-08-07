@@ -7,26 +7,47 @@
 Two refs, and they are **not** interchangeable. Conflating them is the failure this file exists to
 prevent: `<BASE>` identifies the diffity session, `<REVIEW_REF>` identifies the log file.
 
-- `<BASE>` — what to diff *against*; the user's required argument, with no default to fall back on.
+- `<BASE>` — what to diff _against_; the user's required argument, with no default to fall back on.
   If it arrives empty or still literal, stop and report rather than substituting a trunk name.
   Passed to `--base`, to the `curl` bind, and to `diffity open`.
-- `<REVIEW_REF>` — what is *under* review. `diffity --compare` defaults to the working tree, so
+- `<REVIEW_REF>` — what is _under_ review. `diffity --compare` defaults to the working tree, so
   this is always the current branch: `git rev-parse --abbrev-ref HEAD`. Used for **one** thing:
   naming the log — which is what makes a session belong to its branch.
 - `<SKILL_DIR>` — the skill directory, from Repo bindings in SKILL.md
 
+## Substituting the refs
+
+Both refs are substitution sites, and both end up in shell commands. **Substitute them into shell
+variables once, then quote every expansion** — never interpolate the raw value into a command line.
+`git check-ref-format` permits `&`, `#`, `;`, `$`, `|`, `(`, `)`, and quotes in a branch name, so an
+unquoted expansion is not a hypothetical: an ordinary legal ref is enough to break the command or
+run part of it as shell.
+
+```bash
+BASE='<BASE>'                                  # the user's argument, substituted once
+REVIEW_REF="$(git rev-parse --abbrev-ref HEAD)"
+SKILL_DIR='<SKILL_DIR>'
+```
+
+Every command below uses these variables. If a command in this file shows a bare `<PLACEHOLDER>`,
+that is a bug — report it rather than pasting the raw value in.
+
 ## Preconditions
 
 - `which diffity` succeeds. If not, install it: `npm install -g diffity`.
-- `git rev-parse --verify <BASE>` succeeds. Report the bad ref and stop; do not try another one.
+- The base ref resolves to a commit. Report the bad ref and stop; do not try another one.
+
+  ```bash
+  git rev-parse --verify --quiet "${BASE}^{commit}"
+  ```
 
 ## Task
 
-1. Start the server, with `<BASE>` as a **branch ref** — never a commit SHA, so the base stays
+1. Start the server, with `$BASE` as a **branch ref** — never a commit SHA, so the base stays
    meaningful as the branch advances and the session keeps a stable name.
 
    ```bash
-   diffity --base <BASE> --new --no-open      # run in background
+   diffity --base "$BASE" --new --no-open      # run in background
    ```
 
    Note what `--new` does and does not do: it restarts the server, but the session is keyed by
@@ -37,13 +58,19 @@ prevent: `<BASE>` identifies the diffity session, `<REVIEW_REF>` identifies the 
 2. Bind the agent CLI to this ref:
 
    ```bash
-   curl -s "http://localhost:5391/diff?ref=<BASE>" -o /dev/null
+   curl -fsS --get --data-urlencode "ref=$BASE" \
+     "http://localhost:5391/diff" -o /dev/null
    ```
 
    This step is not optional. The `diffity agent` CLI stays bound to whatever ref was last loaded
    through the web endpoint (default `work`) until you load this one. Skip it and every
-   `diffity agent comment` silently lands on a different session. `<BASE>` here, not
-   `<REVIEW_REF>` — it must match what step 1 passed to `--base`.
+   `diffity agent comment` silently lands on a different session. `$BASE` here, not
+   `$REVIEW_REF` — it must match what step 1 passed to `--base`.
+
+   `--get --data-urlencode`, not a hand-built `?ref=…` query. A ref containing `&` starts a second
+   query parameter and one containing `#` starts a URL fragment, so the server sees a _truncated_
+   ref — it binds successfully to the wrong session instead of failing. `-fsS` is what turns a
+   non-2xx response into a visible failure rather than a silent no-op.
 
 3. Verify the binding took:
 
@@ -54,25 +81,29 @@ prevent: `<BASE>` identifies the diffity session, `<REVIEW_REF>` identifies the 
 4. Resolve the log path (see `references/thread-log.md` for the format):
 
    ```bash
-   SLUG=$(python3 "<SKILL_DIR>/scripts/slug.py" <REVIEW_REF>)   # what is under review — NOT <BASE>
+   SLUG="$(python3 "$SKILL_DIR/scripts/slug.py" "$REVIEW_REF")"   # under review — NOT "$BASE"
    mkdir -p .review-sessions
    LOG=".review-sessions/$SLUG.md"
    ```
 
-   `slug.py` slugs whatever ref it is handed and does not second-guess it, so passing `<BASE>`
+   `slug.py` slugs whatever ref it is handed and does not second-guess it, so passing `$BASE`
    here produces a perfectly valid log name that is simply the wrong file — shared by every branch
    reviewed against that base. Getting the argument right is the caller's job.
 
 ## Known pitfalls
 
 - **Verify count comes back 0** — almost always the `curl` was skipped or hit a different ref
-  than the one passed to `--base`. Re-run it against the exact `<BASE>` and check again before
+  than the one passed to `--base`. Re-run it against the exact `$BASE` and check again before
   posting anything.
-- **A `<BASE>` that doesn't resolve looks identical to a skipped `curl`** — both land on a verify
+- **A `$BASE` that doesn't resolve looks identical to a skipped `curl`** — both land on a verify
   count of 0. Check the ref exists before re-running the bind.
-- **Positional form errors on diffity 0.9.5.** `diffity <branch> --no-open` fails; always use the
-  `--base` flag form.
-- **A log named after `<BASE>`** is the quiet version of this phase failing. Nothing errors; the
+- **Positional form errors on diffity 0.9.5.** A positional ref makes the parser read the _next_
+  token as another ref, so `diffity <branch> --no-open` dies with
+  `Error: '--no-open' is not a valid git reference`. Always use the `--base` flag form; it accepts
+  range syntax (`--base main..feature`) too.
+- **An unquoted ref in any of these commands** fails on a ref that is perfectly legal to git —
+  `feat/a&b` backgrounds the command at the `&`. Quote every expansion.
+- **A log named after `$BASE`** is the quiet version of this phase failing. Nothing errors; the
   next review of a different branch just inherits the wrong history. Check `$LOG` before phase 2.
 
 ## Prohibitions
@@ -80,7 +111,7 @@ prevent: `<BASE>` identifies the diffity session, `<REVIEW_REF>` identifies the 
 - Do NOT delegate this phase to a subagent. Two reasons, both fatal:
   - The server must be owned by the main session so teardown can reach it. A subagent's
     background children are not reliably reachable after it returns.
-  - The `curl` step mutates *global* server state — which ref the agent CLI is bound to. Bound
+  - The `curl` step mutates _global_ server state — which ref the agent CLI is bound to. Bound
     inside a subagent, that is not observably true for the orchestrator, and every later
     `diffity agent comment` targets the wrong session with no error.
 - Do NOT post any comment in this phase.

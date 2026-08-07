@@ -2,7 +2,7 @@
 
 **Kind:** data-format spec · **Read by:** phase 2 (restore), phase 4 (post & record), phase 5 (watch)
 
-This is the single source of truth for the log format. Nothing else restates these columns — if
+This is the single source of truth for the log format. Nothing else restates these fields — if
 you need them, read this file.
 
 ## Why it exists
@@ -27,7 +27,7 @@ second time.
 `<slug>` comes from `scripts/slug.py` — never derive it by hand:
 
 ```bash
-SLUG=$(python3 "$SKILL_DIR/scripts/slug.py" <REVIEW_REF>)   # what is under review — NOT the base
+SLUG="$(python3 "$SKILL_DIR/scripts/slug.py" "$REVIEW_REF")"   # under review — NOT the base
 mkdir -p .review-sessions
 LOG=".review-sessions/$SLUG.md"
 ```
@@ -43,33 +43,67 @@ of the full branch name so distinct branches can't collide on one file.
 
 ## Structure
 
-Two parts, in this order: a thread table, then an append-only exchange log.
+Two parts, in this order: a machine-readable thread record block, then an append-only exchange log.
 
-### Thread table
+### Thread records — JSONL, never a markdown table
 
-| thread ID | severity | file | lines | side | anchor | body | status | handled comments |
-|---|---|---|---|---|---|---|---|---|
-| `0020654f-47a8-…` | must-fix | `src/api/auth.ts` | 41-47 | new | `const token = req.headers...` | `[must-fix] Token is read before...` | open | `2f4d0eb2-…` |
+One JSON object per line, inside a single fenced ```jsonl block under a `## Threads` heading. One
+line per thread, rewritten in place when that thread changes.
+
+````markdown
+## Threads
+
+```jsonl
+{
+  "thread_id": "0020654f-47a8-4c31-9f6a-1d2e3f4a5b6c",
+  "severity": "must-fix",
+  "file": "src/api/auth.ts",
+  "start_line": 41,
+  "end_line": 47,
+  "side": "new",
+  "anchor": "const token = req.headers.authorization\nif (!token) return null",
+  "body": "[must-fix] Token is read before the null check.",
+  "status": "open",
+  "handled_comments": [
+    "2f4d0eb2-8af9-479c-ba95-5db750ba8def"
+  ]
+}
+```
+````
+
+**JSONL, not a table, because two fields are hostile to tables.** `anchor` is verbatim source, and
+`body` is a full comment body — either can contain a `|`, which is every TypeScript union and every
+`||`, and a multi-line anchor contains newlines, which a markdown table row cannot represent at all.
+Escaping them by hand corrupts the anchor, and the anchor's whole job is being byte-exact. JSON
+already escapes both, and one object per line keeps a single thread editable without rewriting the
+file.
+
+Write it with a JSON serializer, never by hand-splicing strings — a hand-built line is exactly how
+an unescaped quote or newline gets in. Parse it the same way: read the block, `json.loads` each
+non-empty line. **A line that fails to parse is a hard error** — report it and stop. Never skip it
+and never repair it by guessing, because a dropped line is a finding that silently disappears.
 
 Field rules:
 
-- **thread ID** — the **full** ID from `diffity agent list --json`, not the 8-char prefix that
+- **`thread_id`** — the **full** ID from `diffity agent list --json`, not the 8-char prefix that
   `diffity agent comment` prints in `Created thread <prefix>`. The monitor compares IDs by exact
   string equality, so a prefix here means its status changes never fire. A rolled-over session
-  issues fresh IDs for reposted comments, so this column is rewritten on every restore — it is
+  issues fresh IDs for reposted comments, so this field is rewritten on every restore — it is
   never a stable cross-session key.
-- **severity** — `must-fix` \| `suggestion` \| `question` \| `nit`.
-- **file** — repo-relative path.
-- **lines** — a `start-end` **range**, never a bare line number.
-- **side** — `new` \| `old`. Which side of the diff the finding attaches to.
-- **anchor** — the **verbatim** source text at that range, copied at post time. Never paraphrased.
-  Diffity has its own `anchorContent` field, but it is null on most threads — this column is the
-  one that can be relied on.
-- **body** — the full comment body, including its `[severity]` tag.
-- **status** — `open` \| `resolved` \| `dismissed`.
-- **handled comments** — full IDs of the **human** comments in this thread that have already been
-  answered, comma-separated, empty on first post. This is what the monitor's seed is built from,
-  so it is the one column that must be updated as events are handled rather than only at post
+- **`severity`** — `must-fix` \| `suggestion` \| `question` \| `nit`.
+- **`file`** — repo-relative path.
+- **`start_line`** / **`end_line`** — a **range**, as numbers, never a bare line number.
+- **`side`** — `new` \| `old`. Which side of the diff the finding attaches to, and what phase 2
+  checks the anchor against: the working tree for `new`, `git show "$BASE:<file>"` for `old`.
+- **`anchor`** — the **verbatim** source text at that range, copied at post time. Never
+  paraphrased, never reflowed, and newlines preserved as `\n` by the serializer. Diffity has its
+  own `anchorContent` field, but it is null on most threads — this field is the one that can be
+  relied on.
+- **`body`** — the full comment body, including its `[severity]` tag.
+- **`status`** — `open` \| `resolved` \| `dismissed`.
+- **`handled_comments`** — a JSON array of the full IDs of the **human** comments in this thread
+  that have already been answered; `[]` on first post. This is what the monitor's seed is built
+  from, so it is the one field that must be updated as events are handled rather than only at post
   time. Agent-authored comments are never recorded: the monitor filters them by author anyway.
 
 ### Exchange log
@@ -78,10 +112,11 @@ Append-only. One line per event: what happened, to which thread, and when. Posts
 resolutions, dismissals, reopens, anchors that went stale, rows reconciled against a live session
 rather than reposted, and session start/stop.
 
-This is prose for a human reading back what happened — nothing parses it. Anything a later phase
-needs to *act* on belongs in a thread-table column instead.
+This is prose for a human reading back what happened — nothing parses it, so it is the one place
+free text is safe. Anything a later phase needs to _act_ on belongs in a thread record field
+instead.
 
-## Why range *and* anchor
+## Why range _and_ anchor
 
 A bare `file:line` moves multi-line and old-side findings onto the wrong code when replayed. So
 the range is recorded instead.
@@ -96,11 +131,11 @@ restore into a false `missing`.
 
 ## Status is load-bearing
 
-Closed rows (`resolved`, `dismissed`) are **never reposted**. Because a rolled-over session mints
-fresh thread IDs, reposting a closed finding creates a brand-new *open* thread with no memory of
+Closed records (`resolved`, `dismissed`) are **never reposted**. Because a rolled-over session mints
+fresh thread IDs, reposting a closed finding creates a brand-new _open_ thread with no memory of
 having been settled — silently reopening it and inviting duplicate work.
 
-Closed rows stay in the log exactly as they are. They are history, not a work queue.
+Closed records stay in the log exactly as they are. They are history, not a work queue.
 
 ## Seed snapshot
 
@@ -114,9 +149,9 @@ posted since the last run as part of its baseline:
 }
 ```
 
-- `comment_ids` — the union of every row's **handled comments** column. These are the human
+- `comment_ids` — the union of every record's **`handled_comments`** array. These are the human
   comments already answered; anything else the monitor sees is new by definition.
-- `status` — each row's thread ID → its logged status, for detecting resolves and reopens.
+- `status` — each record's `thread_id` → its logged `status`, for detecting resolves and reopens.
 
 Written to `$LOG.seed.json` and passed as `monitor.py --seed-file`. Build it **after** phase 4 has
 finished writing, so it carries the thread IDs that are actually live rather than the previous

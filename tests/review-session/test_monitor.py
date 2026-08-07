@@ -182,7 +182,8 @@ class EventsForTests(unittest.TestCase):
         ]
         lines = monitor.events_for(thread, seen, {"t1": "open"})
         self.assertEqual(len(lines), 1)
-        self.assertIn("NEW COMMENT [c1] a.py:7 — look here", lines[0])
+        # Both IDs, labelled: actions are keyed by the thread, dedup by the comment.
+        self.assertIn("NEW COMMENT [thread=t1 comment=c1] a.py:7 — look here", lines[0])
         self.assertIn("c1", seen)
         self.assertEqual(monitor.events_for(thread, seen, {"t1": "open"}), [])
 
@@ -252,7 +253,7 @@ class EventsForTests(unittest.TestCase):
 
         lines = monitor.events_for(threads[:1], seen, status)
         self.assertEqual(len(lines), 1)
-        self.assertIn("NEW COMMENT [c1] a.py:1 — first", lines[0])
+        self.assertIn("NEW COMMENT [thread=t1 comment=c1] a.py:1 — first", lines[0])
 
     def test_missing_file_and_line_fall_back_to_placeholders(self):
         lines = monitor.events_for(
@@ -313,6 +314,15 @@ class CliTests(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("--seed-file", proc.stderr)
         self.assertNotIn("diffity agent list", proc.stderr)
+
+    def test_rejects_non_positive_max_errors(self):
+        # 0 or negative would exit on the very first transient failure, and the
+        # validation must happen before any polling starts.
+        for value in ("0", "-1"):
+            proc = self.run_cli("--max-errors", value)
+            self.assertNotEqual(proc.returncode, 0, value)
+            self.assertIn("--max-errors", proc.stderr)
+            self.assertNotIn("diffity agent list", proc.stderr)
 
     def test_help_exits_zero_without_polling(self):
         proc = self.run_cli("--help")

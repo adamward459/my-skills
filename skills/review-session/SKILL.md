@@ -7,14 +7,14 @@ disable-model-invocation: true
 
 # Review Session
 
-A *standing* review process, not a one-shot review. It opens a diffity diff, posts a review onto
+A _standing_ review process, not a one-shot review. It opens a diffity diff, posts a review onto
 it, then keeps listening for the user's replies and new comments and keeps addressing them until
 told to stop. A one-shot review — nothing left running, no log file, no server — is the
 **diffity-review** skill instead.
 
 Diffity does persist comments — in a local sqlite store, not in memory. But a session is keyed by
 **(base ref, HEAD hash)**, so **committing anything rolls the session over** to an empty one and
-the old threads stop being listed. Restarting the server does *not*: on an unchanged HEAD even
+the old threads stop being listed. Restarting the server does _not_: on an unchanged HEAD even
 `--new` reattaches to the existing session with every thread intact.
 
 Both halves are load-bearing. The git-ignored log is what survives the rollover, so it is what a
@@ -26,12 +26,12 @@ that never went away.
 `/review-session` takes **one required argument: the base ref.** There are no modes and no other
 arguments.
 
-- `$BASE` — what to diff *against*. The only thing the user may pass, and it has **no default**. On
+- `$BASE` — what to diff _against_. The only thing the user may pass, and it has **no default**. On
   an empty brief, ask for it and stop until answered. Never fall back to a trunk name and never
   infer one from git: `origin/HEAD`, `@{u}`, and merge-base are defaults in disguise, and they fail
   the same silent way — the session binds to the wrong ref, and every finding, thread, and log row
   is built on the wrong diff with nothing erroring.
-- `$REVIEW_REF` — what is *under* review: always the current branch
+- `$REVIEW_REF` — what is _under_ review: always the current branch
   (`git rev-parse --abbrev-ref HEAD`). Not user-settable. It names the log file, so it must never
   be `$BASE`.
 
@@ -58,7 +58,7 @@ These hold across every phase.
    paraphrased. It is what survives the branch moving on. Diffity has its own `anchorContent`
    field; do not rely on it, it is null on most threads.
 4. **Closed threads are never reposted.** Fresh IDs mean a reposted `resolved` finding returns as
-   a new *open* thread with no memory of being settled.
+   a new _open_ thread with no memory of being settled.
 5. **The monitor is one long-lived process.** Re-invoking it per poll resets its seen set and no
    event ever fires.
 6. **Reconcile against the live session before reposting.** A continued session on an unchanged
@@ -73,17 +73,17 @@ The run is a phase machine. Each phase ends with a **gate** that must hold befor
 begins. A failed gate **stops the run and reports which gate failed** — never proceed hoping a
 later phase compensates.
 
-| # | Phase | Runs in | Loads | Produces |
-|---|---|---|---|---|
-| 1 | Setup | main | `references/session-setup.md` | bound `$BASE`, `$REVIEW_REF`, `$SLUG`, `$LOG` |
-| 2 | Restore | **subagent** | `references/restore-history.md` | rows JSON |
-| 3 | Review | **subagent** | `references/review-diff.md` | findings JSON |
-| 4 | Post & record | main | `references/thread-log.md` | threads posted, log written |
-| 5 | Watch | main | `references/monitor-alerts.md` | monitor armed, events routed |
+| #   | Phase         | Runs in      | Loads                           | Produces                                      |
+| --- | ------------- | ------------ | ------------------------------- | --------------------------------------------- |
+| 1   | Setup         | main         | `references/session-setup.md`   | bound `$BASE`, `$REVIEW_REF`, `$SLUG`, `$LOG` |
+| 2   | Restore       | **subagent** | `references/restore-history.md` | rows JSON                                     |
+| 3   | Review        | **subagent** | `references/review-diff.md`     | findings JSON                                 |
+| 4   | Post & record | main         | `references/thread-log.md`      | threads posted, log written                   |
+| 5   | Watch         | main         | `references/monitor-alerts.md`  | monitor armed, events routed                  |
 
 ---
 
-### Phase 1 — Setup  `[main]`
+### Phase 1 — Setup `[main]`
 
 **Goal.** A diffity session pinned to `$BASE`, with the agent CLI bound to it, and `$LOG` named
 after `$REVIEW_REF`.
@@ -99,7 +99,7 @@ against that base shares one log and phase 2 will restore another branch's findi
 
 ---
 
-### Phase 2 — Restore  `[subagent]`
+### Phase 2 — Restore `[subagent]`
 
 **Goal.** Recover still-open findings from a prior session, and know which anchors went stale.
 
@@ -111,12 +111,17 @@ way, decide it from the filesystem and say nothing about it to the user.
 
 > Read `<SKILL_DIR>/references/restore-history.md` and execute it as your complete instruction
 > set. Inputs: `LOG_PATH=<abs>`, `THREAD_LOG_SPEC=<abs>`,
-> `REPO_ROOT=<abs>`. Follow its Prohibitions exactly. Return only the JSON its Return section
-> specifies.
+> `REPO_ROOT=<abs>`, `BASE=<the bound base ref>`. Follow its Prohibitions exactly. Return only the
+> JSON its Return section specifies.
 
 Every `<abs>` and `<SKILL_DIR>` above is a substitution site, not literal text — expand each to a
 full absolute path before dispatching. A subagent inherits no shell state, so an unexpanded
 `$SKILL_DIR` reaches it as the characters `$SKILL_DIR` and the read fails.
+
+`BASE` is load-bearing here, not context. A `side: old` finding anchors to text the diff **removed**,
+so that anchor exists only on the base side — checking it against the working tree classifies every
+one of them `missing`, and phase 4 then re-reviews findings that never went stale. The module needs
+`$BASE` to read the base-side file. Pass the same ref phase 1 bound.
 
 Carry its `rows` into phase 3 as `ALREADY_THREADED`, and into phase 4 for reposting.
 
@@ -124,7 +129,7 @@ Carry its `rows` into phase 3 as `ALREADY_THREADED`, and into phase 4 for repost
 
 ---
 
-### Phase 3 — Review  `[subagent]`
+### Phase 3 — Review `[subagent]`
 
 **Goal.** Findings on the current diff, excluding anything already threaded.
 
@@ -145,7 +150,7 @@ When phase 2 was skipped, pass `ALREADY_THREADED=none` — the module treats a l
 
 ---
 
-### Phase 4 — Post & record  `[main]`
+### Phase 4 — Post & record `[main]`
 
 **Goal.** Everything reaches diffity and the log, exactly once.
 
@@ -162,21 +167,25 @@ When phase 2 was skipped, pass `ALREADY_THREADED=none` — the module treats a l
 2. **Post new findings** (phase 3) with `diffity agent comment`, **must-fix first**, each body
    tagged `[must-fix]`/`[suggestion]`/`[question]`/`[nit]`. Drop any that duplicates a live or
    restored thread — same location, or the same issue worded differently.
-3. **Record every write** in `$LOG`: thread ID, severity, file, range, side, anchor, body, status,
-   handled comment IDs — plus an exchange-log line for what happened and why (including rows whose
-   anchor went stale, and rows that were reconciled rather than reposted). Take thread IDs from
-   `agent list --json`, **not** from the `Created thread <prefix>` line `agent comment` prints —
-   that is an 8-char prefix, and the monitor matches IDs exactly.
-4. Open the browser: `diffity open $BASE` — the session is identified by its base ref.
+3. **Record every write** in `$LOG` as a JSONL thread record — see `thread-log.md` for the fields
+   — plus an exchange-log line for what happened and why (including rows whose anchor went stale,
+   and rows that were reconciled rather than reposted). Serialize each record with a JSON writer,
+   never by splicing strings: `anchor` and `body` routinely contain quotes, `|`, and newlines, and
+   a hand-built line corrupts exactly the field the restore depends on being byte-exact. Take
+   thread IDs from `agent list --json`, **not** from the `Created thread <prefix>` line
+   `agent comment` prints — that is an 8-char prefix, and the monitor matches IDs exactly.
+4. Open the browser: `diffity open "$BASE"` — the session is identified by its base ref. Quoted,
+   like every other expansion of it: a legal branch name may contain `&`, `#`, or `;`.
 
-**Gate.** Every live thread has exactly one log row, carrying its full ID and a non-empty anchor,
-and **no two live threads share the same file, range, side, and body**. Diffity keys threads by
+**Gate.** `$LOG`'s thread block re-parses cleanly line by line, every live thread has exactly one
+record carrying its full ID and a non-empty anchor, and **no two live threads share the same file,
+range, side, and body**. Diffity keys threads by
 unique ID, so a literal duplicate ID is impossible — the failure invariant 6 warns about surfaces
-as two *distinct* threads carrying the same finding at the same place.
+as two _distinct_ threads carrying the same finding at the same place.
 
 ---
 
-### Phase 5 — Watch  `[main]`
+### Phase 5 — Watch `[main]`
 
 **Goal.** Keep the session alive and answer what arrives.
 
@@ -199,7 +208,7 @@ The session keeps going until the user stops it.
 
 ## Stopping a session
 
-There is no stop *command*. A plain "stop the review" or "stop the monitor" is the whole interface,
+There is no stop _command_. A plain "stop the review" or "stop the monitor" is the whole interface,
 and it is enough. Never leave a session running because the stop wasn't phrased as a command.
 
 Tear down everything the session spawned: `TaskStop` the Monitor, `diffity kill` the server, and
@@ -207,7 +216,7 @@ stop any other background tasks it started. This is safe because the log is the 
 the session is fully restorable via phases 1–2 next time.
 
 Before tearing down, make sure the log reflects final state — including the **handled comments**
-column, since that is what the next run seeds the monitor from — and add an exchange-log line
+field, since that is what the next run seeds the monitor from — and add an exchange-log line
 noting the session stopped.
 
 ## Deployment

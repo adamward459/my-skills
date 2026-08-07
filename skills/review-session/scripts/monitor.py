@@ -8,8 +8,13 @@ per poll would re-seed every time and never fire an event.
 
 Prints one line per event:
 
-    NEW COMMENT [<id>] <file>:<line> — <body excerpt>
-    STATUS CHANGE [<id>] <file>:<line> — open → resolved
+    NEW COMMENT [thread=<tid> comment=<cid>] <file>:<line> — <body excerpt>
+    STATUS CHANGE [<tid>] <file>:<line> — open → resolved
+
+A new-comment event carries both IDs on purpose. `diffity agent resolve/reply/
+dismiss` are keyed by the thread, so routing an event needs <tid>; the log's
+handled_comments field (and thus the next run's seed) is keyed by the comment,
+so deduplication needs <cid>. Using one where the other belongs fails quietly.
 
 Comments already present at startup (including the review's own) are seeded, so
 only what arrives after the monitor starts is reported. On a continued session,
@@ -108,9 +113,13 @@ def events_for(threads, seen, status):
             cid = comment.get("id")
             if not cid or cid in seen or cid in absorbed or not is_human(comment):
                 continue
+            # Both IDs, because they are used for different things: every
+            # `diffity agent` action (resolve/reply/dismiss) is keyed by the
+            # *thread*, while the log's handled_comments field — and therefore
+            # the next run's seed — is keyed by the *comment*.
             lines.append(
-                "NEW COMMENT [%s] %s:%s — %s"
-                % (cid, file_path, line, excerpt(comment.get("body", "")))
+                "NEW COMMENT [thread=%s comment=%s] %s:%s — %s"
+                % (tid, cid, file_path, line, excerpt(comment.get("body", "")))
             )
             absorbed.add(cid)
 
@@ -139,6 +148,11 @@ def main(argv=None):
         help="consecutive poll failures before giving up (default: 5)",
     )
     args = parser.parse_args(argv)
+
+    # 0 or negative would exit on the very first transient failure, which reads
+    # as "diffity keeps failing" when it failed exactly once.
+    if args.max_errors < 1:
+        parser.error("--max-errors must be at least 1")
 
     # Read the seed file before touching the network, so a bad path reports
     # itself rather than being masked by whatever diffity says first.

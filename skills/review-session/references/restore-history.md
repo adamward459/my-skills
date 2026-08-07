@@ -12,10 +12,13 @@ The dispatcher substitutes these. If any is still a literal `<PLACEHOLDER>`, sto
 error shape below.
 
 - `<LOG_PATH>` — absolute path to the session log to restore from
-- `<THREAD_LOG_SPEC>` — absolute path to `references/thread-log.md`, which defines the table you
-  are parsing
-- `<REPO_ROOT>` — absolute path the log's `file` column is relative to. Anchors are checked against
-  the **working tree** here, which is what is under review; you do not need to resolve any ref.
+- `<THREAD_LOG_SPEC>` — absolute path to `references/thread-log.md`, which defines the record
+  format you are parsing
+- `<REPO_ROOT>` — absolute path the log's `file` field is relative to, and the working tree
+  `side: new` anchors are checked against
+- `<BASE>` — the base ref the session is diffed against. Needed for `side: old` rows only, whose
+  anchors live on the base side of the diff. Store it in a shell variable and quote every
+  expansion — a legal branch name may contain `&`, `#`, or `;`.
 
 ## Preconditions
 
@@ -23,21 +26,35 @@ Verify before doing any work. On failure, return the error shape and stop.
 
 - `<LOG_PATH>` exists and is readable.
 - `<THREAD_LOG_SPEC>` exists and is readable.
+- `git rev-parse --verify --quiet "${BASE}^{commit}"` succeeds.
 
 ## Task
 
-1. Read `<THREAD_LOG_SPEC>` first. It defines the thread table's columns and their meaning.
-2. Read `<LOG_PATH>` and parse its thread table.
+1. Read `<THREAD_LOG_SPEC>` first. It defines the thread record format and every field's meaning.
+2. Read `<LOG_PATH>` and parse its thread records.
 3. **Filter to active rows only** — status is neither `resolved` nor `dismissed`. Count what you
    skipped; do not include closed rows in your output.
-4. For each active row, open `<REPO_ROOT>/<file>` and locate the recorded `anchor` text:
+4. For each active row, **pick the file content by its `side`** — this is the step that decides
+   whether the check is even looking at the right text:
+   - `side: new` → the working tree: `<REPO_ROOT>/<file>`.
+   - `side: old` → the base side: `git show "$BASE:<file>"`, run from `<REPO_ROOT>`.
+
+   An `old`-side anchor is text the diff **removed**. It is absent from the working tree by
+   definition, so checking it there classifies every still-valid `old` finding as `missing` — the
+   restore silently degrades into a re-review. If `git show` fails because the file does not exist
+   at `<BASE>`, that row is genuinely `missing`.
+
+5. Locate the recorded `anchor` text in that content:
    - Present at the recorded `start-end` range → `matches`. Return the recorded range.
    - Present elsewhere in the file → `moved`. Return its **current** range.
-   - Not present anywhere in the file, or the file no longer exists → `missing`. Return the
-     recorded range unchanged.
-5. Compare the anchor as **exact text**. Do not fuzzy-match, normalize whitespace, or accept a
+   - Not present anywhere in the file, or the file does not exist on that side → `missing`. Return
+     the recorded range unchanged.
+6. Compare the anchor as **exact text**. Do not fuzzy-match, normalize whitespace, or accept a
    near-match — a false `matches` reattaches a finding to unrelated code, which is worse than a
    false `missing`.
+
+   For an `old`-side row, `moved` means moved _within the base-side file_. Never fall back to
+   searching the other side: a hit there is a different line of history, not the same finding.
 
 ## Return
 
@@ -66,11 +83,14 @@ Emit JSON and nothing else — no prose before or after, no markdown fence.
 Field rules:
 
 - `anchor_state` — one of `matches`, `moved`, `missing`. Required on every row.
-- `start_line` / `end_line` — for `moved`, the **current** location; otherwise as recorded.
+- `side` — copied through verbatim from the row, and the thing that selected which content the
+  anchor was checked against. The orchestrator reposts at this side.
+- `start_line` / `end_line` — for `moved`, the **current** location; otherwise as recorded. For a
+  `side: old` row, "current" means current in the base-side file, not the working tree.
 - `body` — the full original comment body, verbatim. The orchestrator reposts this text.
 - `old_thread_id` / `handled_comments` — copied through verbatim from the row. They still identify
   live threads and comments when the session was merely restarted, so the orchestrator needs them
-  to tell a reconcile from a repost. Return `[]` for an empty handled-comments cell.
+  to tell a reconcile from a repost. Return `[]` when the record's `handled_comments` is empty.
 - `skipped_closed` — how many `resolved`/`dismissed` rows you excluded.
 - Return `"rows": []` if the log has no active rows. That is a valid result, not an error.
 
