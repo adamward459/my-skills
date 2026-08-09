@@ -33,15 +33,12 @@ no other arguments and no modes beyond that flag.
   and log row is built on the wrong diff with nothing erroring.
 - `--no-monitor` — the one optional flag. Skips phase 5: post and log as usual, leave the server
   up, don't watch. Watching is the default; never ask which the user wants.
-- `$REVIEW_REF` — what is _under_ review: always the current branch
-  (`git rev-parse --abbrev-ref HEAD`). Not user-settable. It names the log file, so it must never
-  be `$BASE`.
 
-**Continue automatically.** A session belongs to the branch it reviews, and the log named after
-that branch is the whole of the state. If `$LOG` exists, this run continues that session —
-silently. Do not announce it, do not ask whether to continue, do not offer to start over. If `$LOG`
-does not exist, this is a fresh session. The phases below detect which without any input from the
-user.
+  **Continue automatically.** A session belongs to the branch it reviews, and the log named after
+  that branch is the whole of the state. If `$LOG` exists, this run continues that session —
+  silently. Do not announce it, do not ask whether to continue, do not offer to start over. If `$LOG`
+  does not exist, this is a fresh session. The phases below detect which without any input from the
+  user.
 
 A missing `$BASE` is the **only** thing this skill ever asks about, and it asks once — phase 5
 re-enters phase 1 on every new commit, and that re-entry reuses the base already bound.
