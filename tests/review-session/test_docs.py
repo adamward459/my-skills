@@ -115,17 +115,28 @@ class NoDefaultBaseTests(unittest.TestCase):
 
 class RequiredArgumentTests(unittest.TestCase):
     def test_argument_hint_marks_base_as_required(self):
-        # Angle brackets mean required; square brackets mean optional and would
-        # advertise the removed default back to the user.
+        # Angle brackets mean required; square brackets mean optional. The base
+        # is the first token and must stay angle-bracketed — bracketing it would
+        # advertise the removed default back to the user. Optional flags may
+        # follow, and each must be bracketed so none reads as a second required
+        # argument.
         hint = None
         for line in SKILL_MD.read_text().splitlines():
             if line.startswith("argument-hint:"):
                 hint = line.split(":", 1)[1].strip().strip('"').strip("'")
                 break
         self.assertIsNotNone(hint, "SKILL.md has no argument-hint in its frontmatter")
+        tokens = hint.split()
+        self.assertTrue(tokens, "argument-hint is empty")
         self.assertTrue(
-            hint.startswith("<") and hint.endswith(">"), f"argument-hint is optional: {hint}"
+            tokens[0].startswith("<") and tokens[0].endswith(">"),
+            f"the base argument is optional: {hint}",
         )
+        for token in tokens[1:]:
+            self.assertTrue(
+                token.startswith("[") and token.endswith("]"),
+                f"a non-base argument is not marked optional: {hint}",
+            )
 
     def test_invocation_calls_the_base_required(self):
         self.assertIn("one required argument: the base ref", SKILL_MD.read_text())

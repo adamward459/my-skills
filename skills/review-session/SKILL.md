@@ -1,7 +1,7 @@
 ---
 name: review-session
 description: Run a standing code-review session on the current branch — opens a diffity diff, posts findings as inline comments, and watches for new comments. Continues the current branch's session automatically when one exists, otherwise starts fresh. Takes one required argument, the base ref to diff against, plus an optional --no-monitor flag.
-argument-hint: "<base-ref>"
+argument-hint: "<base-ref> [--no-monitor]"
 disable-model-invocation: true
 ---
 
