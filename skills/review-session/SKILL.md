@@ -1,6 +1,6 @@
 ---
 name: review-session
-description: Run a standing code-review session on the current branch — opens a diffity diff, posts findings as inline comments, and watches for new comments. Continues the current branch's session automatically when one exists, otherwise starts fresh. Takes one required argument, the base ref to diff against, and nothing else.
+description: Run a standing code-review session on the current branch — opens a diffity diff, posts findings as inline comments, and watches for new comments. Continues the current branch's session automatically when one exists, otherwise starts fresh. Takes one required argument, the base ref to diff against, plus an optional --no-monitor flag.
 argument-hint: "<base-ref>"
 disable-model-invocation: true
 ---
@@ -23,14 +23,16 @@ that never went away.
 
 ## Invocation
 
-`/review-session` takes **one required argument: the base ref.** There are no modes and no other
-arguments.
+`/review-session` takes **one required argument: the base ref**, and one optional flag. There are
+no other arguments and no modes beyond that flag.
 
-- `$BASE` — what to diff _against_. The only thing the user may pass, and it has **no default**. On
-  an empty brief, ask for it and stop until answered. Never fall back to a trunk name and never
-  infer one from git: `origin/HEAD`, `@{u}`, and merge-base are defaults in disguise, and they fail
-  the same silent way — the session binds to the wrong ref, and every finding, thread, and log row
-  is built on the wrong diff with nothing erroring.
+- `$BASE` — what to diff _against_. The only positional the user may pass, and it has **no
+  default**. On an empty brief, ask for it and stop until answered. Never fall back to a trunk name
+  and never infer one from git: `origin/HEAD`, `@{u}`, and merge-base are defaults in disguise, and
+  they fail the same silent way — the session binds to the wrong ref, and every finding, thread,
+  and log row is built on the wrong diff with nothing erroring.
+- `--no-monitor` — the one optional flag. Skips phase 5: post and log as usual, leave the server
+  up, don't watch. Watching is the default; never ask which the user wants.
 - `$REVIEW_REF` — what is _under_ review: always the current branch
   (`git rev-parse --abbrev-ref HEAD`). Not user-settable. It names the log file, so it must never
   be `$BASE`.
@@ -185,7 +187,7 @@ as two _distinct_ threads carrying the same finding at the same place.
 
 ---
 
-### Phase 5 — Watch `[main]`
+### Phase 5 — Watch `[main]` — skipped by `--no-monitor`
 
 **Goal.** Keep the session alive and answer what arrives.
 
